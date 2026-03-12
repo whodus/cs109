@@ -85,6 +85,7 @@ def build_team_windows(shots_df: pd.DataFrame,
       - opp_rolling_xg_5, opp_shots_5: same for opponent
       - xg_diff_5 = rolling_xg_5 - opp_rolling_xg_5
       - shot_next_2: 1 if team has ≥1 shot in [t, t+2)
+      - shot_next_5: 1 if team has ≥1 shot in [t, t+5)
       - goal_next_5: 1 if team has ≥1 goal in [t, t+5)
       - game_state: leading / tied / trailing
       - half: 1 if t < 45 else 2
@@ -146,6 +147,13 @@ def build_team_windows(shots_df: pd.DataFrame,
                 )
                 shot_next_2 = 1 if shot_next_2_mask.any() else 0
 
+                shot_next_5_mask = (
+                    (match_shots["team_name"] == team_name) &
+                    (match_shots["event_time_min"] >= t_float) &
+                    (match_shots["event_time_min"] < t_float + 5)
+                )
+                shot_next_5 = 1 if shot_next_5_mask.any() else 0
+
                 goal_next_5_mask = (
                     (match_goals["team_name"] == team_name) &
                     (match_goals["event_time_min"] >= t_float) &
@@ -168,6 +176,7 @@ def build_team_windows(shots_df: pd.DataFrame,
                     "opp_shots_5": opp_shots5,
                     "xg_diff_5": rxg - opp_rxg,
                     "shot_next_2": shot_next_2,
+                    "shot_next_5": shot_next_5,
                     "goal_next_5": goal_next_5,
                     "game_state": game_state,
                     "half": 1 if t < 45 else 2,
@@ -192,6 +201,7 @@ def build_team_windows(shots_df: pd.DataFrame,
     assert (df["rolling_xg_5"] >= 0).all(), "rolling_xg_5 has negative values"
     assert (df["shots_5"] >= 0).all(), "shots_5 has negative values"
     assert df["shot_next_2"].isin([0, 1]).all(), "shot_next_2 not in {0,1}"
+    assert df["shot_next_5"].isin([0, 1]).all(), "shot_next_5 not in {0,1}"
     assert df["goal_next_5"].isin([0, 1]).all(), "goal_next_5 not in {0,1}"
 
     return df

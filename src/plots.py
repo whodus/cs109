@@ -19,7 +19,22 @@ def _ensure_figures_dir():
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
 
-def plot_match_timeline(shots_df: pd.DataFrame, match_id: int, save_path: str = None):
+def _strip_text(ax):
+    """Remove titles, labels, tick labels, and legends for clean visuals."""
+    ax.set_title("")
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    leg = ax.get_legend()
+    if leg is not None:
+        leg.remove()
+
+
+def plot_match_timeline(shots_df: pd.DataFrame,
+                        match_id: int,
+                        save_path: str = None,
+                        with_text: bool = True):
     """
     Fig 1: Timeline of shots for one match.
 
@@ -61,6 +76,8 @@ def plot_match_timeline(shots_df: pd.DataFrame, match_id: int, save_path: str = 
     for h, l in zip(handles, labels):
         seen.setdefault(l, h)
     ax.legend(seen.values(), seen.keys(), loc="upper right")
+    if not with_text:
+        _strip_text(ax)
     plt.tight_layout()
 
     path = save_path or os.path.join(FIGURES_DIR, f"fig1_timeline_{match_id}.png")
@@ -69,7 +86,9 @@ def plot_match_timeline(shots_df: pd.DataFrame, match_id: int, save_path: str = 
     print(f"Saved → {path}")
 
 
-def plot_momentum_bins(windows_df: pd.DataFrame, save_path: str = None):
+def plot_momentum_bins(windows_df: pd.DataFrame,
+                       save_path: str = None,
+                       with_text: bool = True):
     """
     Fig 2/3: Bar charts of P(shot_next_2) and P(goal_next_5) by rolling_xg_5 quintile.
     """
@@ -96,6 +115,8 @@ def plot_momentum_bins(windows_df: pd.DataFrame, save_path: str = None):
         ax.set_ylabel("Probability")
         ax.set_title(title)
         ax.set_xticks(grouped["quintile"].astype(int))
+        if not with_text:
+            _strip_text(ax)
 
     plt.tight_layout()
     path = save_path or os.path.join(FIGURES_DIR, "fig2_momentum_bins.png")
@@ -107,7 +128,8 @@ def plot_momentum_bins(windows_df: pd.DataFrame, save_path: str = None):
 def plot_real_vs_sim(real_windows: pd.DataFrame,
                      sim_windows: pd.DataFrame,
                      bootstrap_df: pd.DataFrame,
-                     save_path: str = None):
+                     save_path: str = None,
+                     with_text: bool = True):
     """
     Fig 4: Bar chart of delta_shot and delta_goal for real vs. sim,
     with 95% CI error bars derived from bootstrap_df.
@@ -163,6 +185,8 @@ def plot_real_vs_sim(real_windows: pd.DataFrame,
         ax.axhline(0, color="gray", lw=0.8, ls="--")
         ax.set_ylabel("Δ Probability (Q5 - Q1)")
         ax.set_title(title)
+        if not with_text:
+            _strip_text(ax)
 
     plt.tight_layout()
     path = save_path or os.path.join(FIGURES_DIR, "fig4_real_vs_sim.png")
@@ -171,7 +195,9 @@ def plot_real_vs_sim(real_windows: pd.DataFrame,
     print(f"Saved → {path}")
 
 
-def plot_bootstrap_intervals(bootstrap_df: pd.DataFrame, save_path: str = None):
+def plot_bootstrap_intervals(bootstrap_df: pd.DataFrame,
+                             save_path: str = None,
+                             with_text: bool = True):
     """
     Fig 5 (optional): Distribution of gap_shot and gap_goal across bootstrap iterations.
     """
@@ -194,9 +220,229 @@ def plot_bootstrap_intervals(bootstrap_df: pd.DataFrame, save_path: str = None):
         ax.set_ylabel("Count")
         ax.set_title(title)
         ax.legend()
+        if not with_text:
+            _strip_text(ax)
 
     plt.tight_layout()
     path = save_path or os.path.join(FIGURES_DIR, "fig5_bootstrap_intervals.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def _momentum_series(windows_df: pd.DataFrame) -> pd.Series:
+    """
+    Default momentum metric for null-model visuals.
+    Uses rolling_xg_5 so it works for both real and simulated data.
+    """
+    return windows_df["rolling_xg_5"]
+
+
+def _rolling_mean(values: pd.Series, window: int = 3) -> pd.Series:
+    return values.rolling(window=window, center=True, min_periods=1).mean()
+
+
+def plot_real_vs_sim_match_timeline(real_windows: pd.DataFrame,
+                                    real_shots: pd.DataFrame,
+                                    sim_windows: pd.DataFrame,
+                                    sim_shots: pd.DataFrame,
+                                    match_id: int,
+                                    save_path: str = None,
+                                    smooth_window: int = 3):
+    """
+    Fig N1: Real vs simulated match timeline (same match_id).
+    Two panels: Real (top) and Simulated (bottom).
+    Each panel shows shot dots, goals, and a rolling momentum line.
+    """
+    _ensure_figures_dir()
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
+    panels = [
+        ("Real match", real_windows, real_shots, axes[0]),
+        ("Simulated match", sim_windows, sim_shots, axes[1]),
+    ]
+
+    for title, win_df, shots_df, ax in panels:
+        if win_df.empty or shots_df.empty:
+            ax.set_title(f"{title} (no data)")
+            continue
+
+        teams = list(win_df["team_name"].unique())
+        colors = ["#1f77b4", "#ff7f0e"]
+        team_color = {t: colors[i % 2] for i, t in enumerate(teams)}
+
+        # Momentum lines
+        for team in teams:
+            team_win = win_df[win_df["team_name"] == team].sort_values("t_minute")
+            mom = _momentum_series(team_win)
+            mom_s = _rolling_mean(mom, window=smooth_window)
+            ax.plot(team_win["t_minute"], mom_s, color=team_color[team], lw=2)
+
+        # Shot and goal markers near bottom
+        ymin, ymax = ax.get_ylim()
+        base = ymin + (ymax - ymin) * 0.05
+        for team in teams:
+            team_shots = shots_df[shots_df["team_name"] == team]
+            ax.scatter(
+                team_shots["event_time_min"],
+                np.full(len(team_shots), base),
+                s=team_shots["shot_xg"].fillna(0.05) * 500,
+                color=team_color[team],
+                alpha=0.6,
+                marker="o",
+                label=f"{team} shot" if title == "Real match" else None,
+            )
+            goals = team_shots[team_shots["is_goal"] == 1]
+            ax.scatter(
+                goals["event_time_min"],
+                np.full(len(goals), base),
+                s=goals["shot_xg"].fillna(0.1) * 700,
+                color=team_color[team],
+                marker="*",
+                edgecolors="black",
+                zorder=5,
+                label=f"{team} goal" if title == "Real match" else None,
+            )
+
+        ax.set_ylabel("Momentum (rolling xG)")
+        ax.set_title(title)
+
+    # Legend from top panel only, dedup
+    handles, labels = axes[0].get_legend_handles_labels()
+    seen = {}
+    for h, l in zip(handles, labels):
+        if l:
+            seen.setdefault(l, h)
+    axes[0].legend(seen.values(), seen.keys(), loc="upper left", ncol=2)
+
+    axes[1].set_xlabel("Minute")
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, f"fig_null_real_vs_sim_{match_id}.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_simulated_momentum_line(sim_windows: pd.DataFrame,
+                                 match_id: int,
+                                 save_path: str = None,
+                                 smooth_window: int = 3):
+    """
+    Fig N2: Simulated match momentum line over time.
+    """
+    _ensure_figures_dir()
+    if sim_windows.empty:
+        print(f"Simulated windows empty for match {match_id}")
+        return
+
+    teams = list(sim_windows["team_name"].unique())
+    colors = ["#1f77b4", "#ff7f0e"]
+    team_color = {t: colors[i % 2] for i, t in enumerate(teams)}
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    for team in teams:
+        team_win = sim_windows[sim_windows["team_name"] == team].sort_values("t_minute")
+        mom = _momentum_series(team_win)
+        mom_s = _rolling_mean(mom, window=smooth_window)
+        ax.plot(team_win["t_minute"], mom_s, color=team_color[team], lw=2, label=team)
+
+    ax.set_xlabel("Minute")
+    ax.set_ylabel("Momentum (rolling xG)")
+    ax.set_title("Simulated match momentum")
+    ax.legend(loc="upper left")
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, f"fig_null_sim_momentum_{match_id}.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_real_vs_sim_momentum_bins(real_windows: pd.DataFrame,
+                                   sim_windows: pd.DataFrame,
+                                   save_path: str = None):
+    """
+    Fig N3: Real vs simulated momentum-bin curve.
+    x-axis: momentum bin (quintiles), y-axis: P(shot_next_2).
+    """
+    _ensure_figures_dir()
+
+    real = real_windows.copy()
+    sim = sim_windows.copy()
+
+    # Define bins from real data and apply to both
+    real["momentum"] = _momentum_series(real)
+    sim["momentum"] = _momentum_series(sim)
+
+    bins = pd.qcut(real["momentum"], q=5, labels=False, duplicates="drop")
+    # Use bin edges from qcut on real
+    _, bin_edges = pd.qcut(real["momentum"], q=5, retbins=True, duplicates="drop")
+    real["bin"] = pd.cut(real["momentum"], bins=bin_edges, labels=False, include_lowest=True)
+    sim["bin"] = pd.cut(sim["momentum"], bins=bin_edges, labels=False, include_lowest=True)
+
+    real_grp = real.groupby("bin")["shot_next_2"].mean().reset_index()
+    sim_grp = sim.groupby("bin")["shot_next_2"].mean().reset_index()
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(real_grp["bin"] + 1, real_grp["shot_next_2"], marker="o", label="Real")
+    ax.plot(sim_grp["bin"] + 1, sim_grp["shot_next_2"], marker="o", label="Simulated")
+    ax.set_xlabel("Momentum quintile (1=low, 5=high)")
+    ax.set_ylabel("P(shot in next 2 min)")
+    ax.set_title("Real vs Simulated Momentum Bins")
+    ax.legend(loc="upper left")
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, "fig_null_bins_shot_next_2.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_effect_size_bars(real_windows: pd.DataFrame,
+                          sim_windows: pd.DataFrame,
+                          bootstrap_df: pd.DataFrame = None,
+                          save_path: str = None):
+    """
+    Fig N4: Bar chart of effect sizes (Δshot and Δgoal) for real vs simulated.
+    Uses bootstrap_df for error bars if provided.
+    """
+    _ensure_figures_dir()
+
+    from utils import compute_delta
+
+    delta_shot_real = compute_delta(real_windows, "shot_next_2")
+    delta_goal_real = compute_delta(real_windows, "goal_next_5")
+    delta_shot_sim = compute_delta(sim_windows, "shot_next_2")
+    delta_goal_sim = compute_delta(sim_windows, "goal_next_5")
+
+    labels = ["Δ Shot (Real)", "Δ Shot (Sim)", "Δ Goal (Real)", "Δ Goal (Sim)"]
+    values = [delta_shot_real, delta_shot_sim, delta_goal_real, delta_goal_sim]
+
+    yerr = None
+    if bootstrap_df is not None and not bootstrap_df.empty:
+        def ci_hw(col):
+            vals = bootstrap_df[col].dropna()
+            lo = np.percentile(vals, 2.5)
+            hi = np.percentile(vals, 97.5)
+            mean = vals.mean()
+            return mean - lo, hi - mean
+
+        shot_lo, shot_hi = ci_hw("delta_shot_real")
+        goal_lo, goal_hi = ci_hw("delta_goal_real")
+        sim_shot_lo, sim_shot_hi = ci_hw("delta_shot_sim")
+        sim_goal_lo, sim_goal_hi = ci_hw("delta_goal_sim")
+        yerr = [
+            [shot_lo, sim_shot_lo, goal_lo, sim_goal_lo],
+            [shot_hi, sim_shot_hi, goal_hi, sim_goal_hi],
+        ]
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.bar(labels, values, color=["#4e79a7", "#f28e2b", "#4e79a7", "#f28e2b"],
+           alpha=0.85, edgecolor="black", yerr=yerr, capsize=6)
+    ax.axhline(0, color="gray", lw=0.8, ls="--")
+    ax.set_ylabel("Δ Probability (Q5 - Q1)")
+    ax.set_title("Effect Sizes: Real vs Simulated")
+    plt.xticks(rotation=20, ha="right")
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, "fig_null_effect_sizes.png")
     fig.savefig(path)
     plt.close(fig)
     print(f"Saved → {path}")
