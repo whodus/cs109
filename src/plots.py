@@ -200,3 +200,87 @@ def plot_bootstrap_intervals(bootstrap_df: pd.DataFrame, save_path: str = None):
     fig.savefig(path)
     plt.close(fig)
     print(f"Saved → {path}")
+
+
+# ── Supplementary pressure figures ───────────────────────────────────────────
+
+def _binary_bar(ax, windows_df, pressure_col, outcome_col, labels, title, colors):
+    """Helper: bar chart of P(outcome) split by a binary pressure column."""
+    grp = windows_df.groupby(pressure_col)[outcome_col].mean()
+    ax.bar(labels, [grp.get(0, 0), grp.get(1, 0)],
+           color=colors, alpha=0.85, edgecolor="black")
+    ax.set_ylabel(f"P({outcome_col})")
+    ax.set_title(title)
+    ax.set_ylim(0, max(grp.max() * 1.3, 0.05))
+    for i, v in enumerate([grp.get(0, 0), grp.get(1, 0)]):
+        ax.text(i, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=10)
+
+
+def plot_supp_corner_pressure(windows_df: pd.DataFrame, save_path: str = None):
+    """
+    Supp Fig 1: P(shot_next_2) split by recent_corner_pressure (0 vs 1).
+    """
+    _ensure_figures_dir()
+    fig, ax = plt.subplots(figsize=(6, 5))
+    _binary_bar(ax, windows_df,
+                pressure_col="recent_corner_pressure",
+                outcome_col="shot_next_2",
+                labels=["No recent corner shot", "Recent corner shot"],
+                title="P(shot next 2 min) by Recent Corner Pressure",
+                colors=["#aec7e8", "#1f77b4"])
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, "suppfig1_corner_pressure.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_supp_set_piece_pressure(windows_df: pd.DataFrame, save_path: str = None):
+    """
+    Supp Fig 2: P(goal_next_5) split by recent_set_piece_pressure (0 vs 1).
+    """
+    _ensure_figures_dir()
+    fig, ax = plt.subplots(figsize=(6, 5))
+    _binary_bar(ax, windows_df,
+                pressure_col="recent_set_piece_pressure",
+                outcome_col="goal_next_5",
+                labels=["No recent set-piece shot", "Recent set-piece shot"],
+                title="P(goal next 5 min) by Recent Set-Piece Pressure",
+                colors=["#ffbb78", "#ff7f0e"])
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, "suppfig2_set_piece_pressure.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_supp_big_chance_bins(windows_df: pd.DataFrame, save_path: str = None):
+    """
+    Supp Fig 3: P(goal_next_5) by big_chances_5 bin (0 / 1 / 2+).
+    """
+    _ensure_figures_dir()
+    df = windows_df.copy()
+    df["big_chance_bin"] = df["big_chances_5"].clip(upper=2).astype(int)
+    bin_labels = {0: "0", 1: "1", 2: "2+"}
+
+    grp = df.groupby("big_chance_bin")["goal_next_5"].mean()
+    counts = df.groupby("big_chance_bin")["goal_next_5"].count()
+
+    x_vals = sorted(grp.index)
+    labels = [bin_labels[v] for v in x_vals]
+    heights = [grp[v] for v in x_vals]
+    ns = [counts[v] for v in x_vals]
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    bars = ax.bar(labels, heights, color=["#d62728", "#e377c2", "#9467bd"][:len(x_vals)],
+                  alpha=0.85, edgecolor="black")
+    ax.set_xlabel("Big chances (xG ≥ 0.30) in last 5 min")
+    ax.set_ylabel("P(goal next 5 min)")
+    ax.set_title("P(goal next 5 min) by Big Chance Count")
+    for i, (h, n) in enumerate(zip(heights, ns)):
+        ax.text(i, h + 0.002, f"{h:.3f}\n(n={n})", ha="center", va="bottom", fontsize=9)
+    plt.tight_layout()
+    path = save_path or os.path.join(FIGURES_DIR, "suppfig3_big_chance_bins.png")
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"Saved → {path}")

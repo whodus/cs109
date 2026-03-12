@@ -39,6 +39,40 @@ def _rolling_xg(shots_df: pd.DataFrame, match_id: int, team_name: str,
     return float(sub["shot_xg"].sum()), int(len(sub))
 
 
+_CORNER_PATTERNS = {"From Corner"}
+_SET_PIECE_PATTERNS = {"From Corner", "From Free Kick"}
+_BIG_CHANCE_XG = 0.30
+
+
+def _supp_features(match_shots: pd.DataFrame, team_name: str,
+                   t_start: float, t_end: float) -> dict:
+    """
+    Compute supplementary pressure features for one team in [t_start, t_end).
+
+    Requires match_shots to have 'play_pattern_name' and 'shot_xg' columns.
+    Returns dict of 6 feature values.
+    """
+    mask = (
+        (match_shots["team_name"] == team_name) &
+        (match_shots["event_time_min"] >= t_start) &
+        (match_shots["event_time_min"] < t_end)
+    )
+    sub = match_shots.loc[mask]
+
+    corner = int((sub["play_pattern_name"].isin(_CORNER_PATTERNS)).sum())
+    set_piece = int((sub["play_pattern_name"].isin(_SET_PIECE_PATTERNS)).sum())
+    big_chance = int((sub["shot_xg"] >= _BIG_CHANCE_XG).sum())
+
+    return {
+        "corner_shots_5": corner,
+        "set_piece_shots_5": set_piece,
+        "big_chances_5": big_chance,
+        "recent_corner_pressure": 1 if corner > 0 else 0,
+        "recent_set_piece_pressure": 1 if set_piece > 0 else 0,
+        "recent_big_chance_pressure": 1 if big_chance > 0 else 0,
+    }
+
+
 def build_team_windows(shots_df: pd.DataFrame,
                        lookback: int = LOOKBACK,
                        max_minute: int = MAX_MINUTE) -> pd.DataFrame:
@@ -62,6 +96,9 @@ def build_team_windows(shots_df: pd.DataFrame,
     # Work only with shot rows (is_shot == 1) — keep shot_xg valid
     shot_rows = shots_df[shots_df["is_shot"] == 1].copy()
     shot_rows["shot_xg"] = shot_rows["shot_xg"].fillna(0.0)
+
+    # Supplementary features require play_pattern_name (absent in simulated data)
+    has_supp = "play_pattern_name" in shot_rows.columns
 
     # Also keep goal rows for game_state computation
     goal_rows = shots_df[shots_df["is_goal"] == 1].copy()
@@ -120,7 +157,7 @@ def build_team_windows(shots_df: pd.DataFrame,
                 goals_before = match_goals[match_goals["event_time_min"] < t_float]
                 game_state = compute_game_state(goals_before, team_name)
 
-                rows.append({
+                row = {
                     "match_id": match_id,
                     "team_name": team_name,
                     "opponent_name": opp_name,
@@ -136,7 +173,13 @@ def build_team_windows(shots_df: pd.DataFrame,
                     "half": 1 if t < 45 else 2,
                     "match_score_for": match_score_for,
                     "match_score_against": match_score_against,
-                })
+                }
+
+                if has_supp:
+                    row.update(_supp_features(match_shots, team_name,
+                                              t_float - lookback, t_float))
+
+                rows.append(row)
 
     df = pd.DataFrame(rows)
 
